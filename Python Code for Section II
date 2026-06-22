@@ -1,0 +1,105 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import grey_dilation, grey_erosion
+import os
+import zipfile
+from google.colab import files
+
+def morphological_gradient(image, size=3):
+    """Calculates the discrete morphological gradient."""
+    # Using a 3x3 structuring element for von Neumann/Moore neighborhood approximation
+    dilated = grey_dilation(image, size=(size, size))
+    eroded = grey_erosion(image, size=(size, size))
+    return dilated - eroded
+
+def calculate_topological_hazard(image, u_max=1023, beta=2.5, eta=1000, lambda_weight=0.005):
+    """
+    Calculates the spatio-temporal hazard H(x,t) based on the topological gradient.
+    """
+    # 1. Baseline Weibull Hazard h_0(x,t)
+    # Adding small epsilon to avoid division by zero
+    baseline_hazard = (beta / eta) * np.power((image + 1e-5) / eta, beta - 1)
+    
+    # 2. Morphological Thermal Gradient
+    grad_U = morphological_gradient(image)
+    
+    # 3. Topological Covariate Tensor Z (Inverse Gradient)
+    # High Z means low gradient (trapped heat), Low Z means high gradient (edge dissipation)
+    Z = u_max - grad_U
+    
+    # Mask Z so that completely dark regions (image == 0) don't register as high hazard 
+    # just because their gradient is zero. We only care about active pixels.
+    active_mask = (image > 0).astype(float)
+    Z = Z * active_mask
+    
+    # 4. Spatio-Temporal Hazard H(x,t)
+    hazard_multiplier = np.exp(lambda_weight * Z)
+    H_xt = baseline_hazard * hazard_multiplier
+    
+    return H_xt, grad_U
+
+# ==========================================
+# 1. Setup the 10-Bit Emissive Hardware Grid
+# ==========================================
+grid_size = 50
+U_matrix = np.zeros((grid_size, grid_size), dtype=np.int32)
+
+# Scenario A: Massive solid block (Trapped thermal interior)
+U_matrix[10:40, 10:25] = 1023 
+
+# Scenario B: Thin high-contrast line (Maximum thermal dissipation)
+U_matrix[10:40, 35:38] = 1023 
+
+# ==========================================
+# 2. Execute the Topological Hazard Algorithm
+# ==========================================
+H_matrix, gradient_matrix = calculate_topological_hazard(U_matrix)
+
+# ==========================================
+# 3. Generate the Publication Figures
+# ==========================================
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+# Plot 1: Original Drive Vector
+im0 = axes[0].imshow(U_matrix, cmap='gray', vmin=0, vmax=1023)
+axes[0].set_title(r"Original 10-Bit Drive Vector $\mathbf{U}(x,t)$", fontsize=14, fontweight='bold')
+plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+
+# Plot 2: Morphological Gradient
+im1 = axes[1].imshow(gradient_matrix, cmap='magma', vmin=0, vmax=1023)
+axes[1].set_title(r"Morphological Gradient $\nabla\mathbf{U}$", fontsize=14, fontweight='bold')
+plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+# Plot 3: Actuarial Hazard Map
+# Use a logarithmic scale representation for visual clarity of the exponential hazard
+im2 = axes[2].imshow(np.log1p(H_matrix), cmap='inferno')
+axes[2].set_title(r"Spatio-Temporal Hazard $\mathcal{H}(x,t)$", fontsize=14, fontweight='bold')
+plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+for ax in axes:
+    ax.axis('off')
+
+plt.tight_layout()
+
+# ==========================================
+# 4. Save Figures and Create Zip File for Download
+# ==========================================
+output_dir = "actuarial_transform_figures"
+os.makedirs(output_dir, exist_ok=True)
+
+fig_path = os.path.join(output_dir, "topological_hazard_mapping.pdf")
+plt.savefig(fig_path, dpi=300, bbox_inches='tight', format='pdf')
+print(f"High-resolution PDF saved to {fig_path}")
+
+zip_filename = "actuarial_transform_results.zip"
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    zipf.write(fig_path, arcname="topological_hazard_mapping.pdf")
+
+print(f"Results zipped successfully into: {zip_filename}")
+
+plt.show()
+
+try:
+    files.download(zip_filename)
+except Exception as e:
+    print("Download triggered. If automatic download fails, retrieve from the Colab file browser.")
