@@ -1,0 +1,111 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import cumulative_trapezoid
+import os
+import zipfile
+from google.colab import files
+from IPython.display import FileLink
+
+def generate_survival_curves(months=60, dt=0.1):
+    """
+    Simulates the structural integrity I(t) based on the Weibull hazard model
+    for standard and Actuarially Transformed hardware.
+    """
+    time = np.arange(0, months, dt)
+    
+    # 1. Standard Spatio-Temporal Hazard (High continuous stress)
+    beta = 2.5
+    eta = 24.0 # Scale parameter (months)
+    
+    # Baseline Weibull hazard
+    h_standard = (beta / eta) * (time / eta)**(beta - 1)
+    h_standard *= 1.8 
+    
+    # 2. Transformed Hazard (DFAT applied)
+    h_transformed = (beta / eta) * (time / eta)**(beta - 1)
+    h_transformed *= 0.6 
+    
+    # 3. Calculate Structural Integrity I(t) using cumulative integration
+    cumulative_h_std = cumulative_trapezoid(h_standard, time, initial=0)
+    cumulative_h_trans = cumulative_trapezoid(h_transformed, time, initial=0)
+    
+    I_standard = np.exp(-cumulative_h_std)
+    I_transformed = np.exp(-cumulative_h_trans)
+    
+    return time, I_standard, I_transformed
+
+# ==========================================
+# 1. Execute Simulation
+# ==========================================
+time_axis, I_std, I_trans = generate_survival_curves()
+
+failure_threshold = 0.5
+std_fail_idx = np.argmin(np.abs(I_std - failure_threshold))
+trans_fail_idx = np.argmin(np.abs(I_trans - failure_threshold))
+
+std_fail_month = time_axis[std_fail_idx]
+trans_fail_month = time_axis[trans_fail_idx]
+
+# ==========================================
+# 2. Generate the Publication Figure
+# ==========================================
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Plot the integrity curves
+ax.plot(time_axis, I_std, color='red', linewidth=3, label=r'Standard Processing $\mathbf{U}(t)$')
+ax.plot(time_axis, I_trans, color='#006600', linewidth=3, linestyle='-', label=r'Actuarial Transform $\mathcal{A}\{\mathbf{U}\}$')
+
+# Liability Window and Failure Threshold
+ax.axvspan(0, 36, color='gray', alpha=0.15, label='36-Month Warranty Liability Window')
+ax.axhline(failure_threshold, color='black', linestyle='--', linewidth=2, label=r'Critical Failure Threshold ($I_{crit} = 0.5$)')
+
+# Markers for intersection points
+ax.plot(std_fail_month, failure_threshold, 'ro', markersize=8)
+ax.plot(trans_fail_month, failure_threshold, 'go', markersize=8)
+
+# Annotations
+ax.annotate(f'Failure at {std_fail_month:.1f} Mo.', xy=(std_fail_month, failure_threshold), 
+            xytext=(std_fail_month - 10, failure_threshold - 0.1),
+            arrowprops=dict(facecolor='red', shrink=0.05, width=1, headwidth=6),
+            fontsize=12, fontweight='bold', color='red')
+
+ax.annotate(f'Failure at {trans_fail_month:.1f} Mo.', xy=(trans_fail_month, failure_threshold), 
+            xytext=(trans_fail_month + 2, failure_threshold + 0.1),
+            arrowprops=dict(facecolor='#006600', shrink=0.05, width=1, headwidth=6),
+            fontsize=12, fontweight='bold', color='#006600')
+
+# Labels and styling
+ax.set_title('Weibull Survival Projection: Structural Integrity vs. Time', fontsize=16, fontweight='bold')
+ax.set_xlabel('Cumulative Active Screen Time (Months)', fontsize=14)
+ax.set_ylabel(r'Structural Integrity $I(t)$', fontsize=14)
+ax.set_xlim(0, 60)
+ax.set_ylim(0, 1.05)
+ax.grid(True, linestyle='--', alpha=0.6)
+ax.legend(loc='lower left', fontsize=12, framealpha=0.9)
+
+plt.tight_layout()
+
+# ==========================================
+# 3. Save Figure and Create Zip File
+# ==========================================
+output_dir = "actuarial_survival_figures"
+os.makedirs(output_dir, exist_ok=True)
+
+fig_path = os.path.join(output_dir, "actuarial_survival_projection.pdf")
+plt.savefig(fig_path, dpi=300, bbox_inches='tight', format='pdf')
+print(f"High-resolution PDF saved to {fig_path}")
+
+zip_filename = "actuarial_survival_projection.zip"
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    zipf.write(fig_path, arcname="actuarial_survival_projection.pdf")
+
+print(f"Results zipped successfully into: {zip_filename}")
+plt.show()
+
+# Explicitly display the clickable link
+display(FileLink(zip_filename))
+
+try:
+    files.download(zip_filename)
+except Exception as e:
+    print("Automatic download triggered. If it fails, please use the clickable link above.")
