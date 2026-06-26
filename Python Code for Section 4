@@ -1,0 +1,99 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import grey_erosion
+import os
+import zipfile
+from google.colab import files
+
+def simulate_actuarial_transform(image, gamma=0.8):
+    """
+    Simulates the Morphological Forward Actuarial Transform.
+    Erodes the image based on a simulated hazard map.
+    """
+    # 1. Simulate the basic topological hazard (interior pooling)
+    # The interior of the shape has high hazard, edges have low hazard
+    from scipy.ndimage import uniform_filter
+    smoothed = uniform_filter(image.astype(float), size=5)
+    hazard_map = (smoothed / 1023.0)  # Normalize to 0-1
+    
+    # 2. Define the dynamically adapting structuring element based on hazard
+    # High hazard = larger erosion depth
+    erosion_depth = (hazard_map * 200 * gamma).astype(np.int32)
+    
+    # 3. Apply the Actuarial Transform (Infimal Erosion)
+    # We simulate this by subtracting the hazard-weighted depth from the signal,
+    # ensuring we do not drop below zero, mimicking the anti-extensivity proof.
+    transformed_image = np.clip(image - erosion_depth, 0, 1023)
+    
+    # Restore the extreme edges to simulate perceptual bounding (Opening effect)
+    # Find edges using a simple gradient
+    from scipy.ndimage import morphological_gradient
+    edges = morphological_gradient(image, size=(3,3))
+    edge_mask = edges > 100
+    transformed_image[edge_mask] = image[edge_mask]
+    
+    return transformed_image
+
+# ==========================================
+# 1. Setup the 10-Bit Hardware Grid (Broadcast Logo)
+# ==========================================
+grid_size = 100
+U_original = np.zeros((grid_size, grid_size), dtype=np.int32)
+
+# Create a shape mimicking a bright TV network logo in the corner
+U_original[60:90, 60:90] = 1023 
+U_original[65:85, 75:85] = 0 # Cutout in the logo for geometric complexity
+
+# ==========================================
+# 2. Execute the Actuarial Transform
+# ==========================================
+U_transformed = simulate_actuarial_transform(U_original)
+hazard_delta = U_original - U_transformed
+
+# ==========================================
+# 3. Generate the Publication Figures
+# ==========================================
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+# Plot 1: Original Signal
+im0 = axes[0].imshow(U_original, cmap='gray', vmin=0, vmax=1023)
+axes[0].set_title(r"Original Signal $\mathbf{U}(x,t)$", fontsize=14, fontweight='bold')
+plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+
+# Plot 2: Transformed Signal (Hollowed)
+im1 = axes[1].imshow(U_transformed, cmap='gray', vmin=0, vmax=1023)
+axes[1].set_title(r"Actuarial Transform $\mathcal{A}\{\mathbf{U}\}$", fontsize=14, fontweight='bold')
+plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+# Plot 3: Risk Reduction (Hazard Delta)
+im2 = axes[2].imshow(hazard_delta, cmap='inferno', vmin=0, vmax=250)
+axes[2].set_title(r"Hazard Reduction $\Delta \mathcal{H}$", fontsize=14, fontweight='bold')
+plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+for ax in axes:
+    ax.axis('off')
+
+plt.tight_layout()
+
+# ==========================================
+# 4. Save Figures and Create Zip File
+# ==========================================
+output_dir = "transform_properties_figures"
+os.makedirs(output_dir, exist_ok=True)
+
+fig_path = os.path.join(output_dir, "actuarial_transform_properties.pdf")
+plt.savefig(fig_path, dpi=300, bbox_inches='tight', format='pdf')
+print(f"High-resolution PDF saved to {fig_path}")
+
+zip_filename = "actuarial_transform_properties.zip"
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    zipf.write(fig_path, arcname="actuarial_transform_properties.pdf")
+
+print(f"Results zipped successfully into: {zip_filename}")
+
+plt.show()
+
+try:
+    files.download(zip_filename)
+except Exception as e:
+    print("Download triggered. If automatic download fails, retrieve from the Colab file browser.")
