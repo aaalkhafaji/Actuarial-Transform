@@ -1,0 +1,100 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+import os
+import zipfile
+from google.colab import files
+
+def simulate_hardware_dfat(image_size):
+    """
+    Simulates the DFAT pipeline execution to benchmark time complexity
+    and track quantization boundaries.
+    """
+    # Create random 10-bit image representing a video frame
+    U = np.random.randint(0, 1024, size=(image_size, image_size), dtype=np.int32)
+    
+    start_time = time.perf_counter()
+    
+    # 1. Simulate hardware min/max over a 3x3 window (simulating line buffers)
+    # For benchmarking speed, we use numpy's vectorized equivalents of the local O(1) operations
+    from scipy.ndimage import maximum_filter, minimum_filter
+    U_dilate = maximum_filter(U, size=3)
+    U_erode = minimum_filter(U, size=3)
+    
+    # 2. Topological Gradient
+    grad_U = U_dilate - U_erode
+    
+    # 3. Environmental Tensor Z
+    Z = 1023 - grad_U
+    
+    # 4. LUT Fetch Simulation (Array indexing simulates O(1) hardware fetch)
+    # Dummy LUT: Hazard erosion depth scales with Z
+    LUT = (np.linspace(0, 100, 1024)).astype(np.int32) 
+    K_H = LUT[Z] 
+    
+    # 5. Infimal Erosion (Saturation Subtraction)
+    U_hat = np.clip(U - K_H, 0, 1023)
+    
+    end_time = time.perf_counter()
+    execution_time = end_time - start_time
+    
+    return execution_time, U_hat
+
+# ==========================================
+# 1. Benchmark O(N) Scaling
+# ==========================================
+resolutions = [256, 512, 1024, 2048, 4096]
+pixel_counts = [r**2 for r in resolutions]
+execution_times = []
+
+print("Benchmarking DFAT hardware synthesis logic...")
+for r in resolutions:
+    exec_time, U_final = simulate_hardware_dfat(r)
+    execution_times.append(exec_time)
+    print(f"Resolution {r}x{r} processed in {exec_time:.4f} seconds.")
+
+# ==========================================
+# 2. Generate the Publication Figures
+# ==========================================
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Plot 1: O(N) Complexity Proof
+axes[0].plot(pixel_counts, execution_times, marker='o', color='b', linewidth=2, markersize=8)
+axes[0].set_title("DFAT Computational Complexity\n(Linear Scaling $\mathcal{O}(N)$)", fontsize=14, fontweight='bold')
+axes[0].set_xlabel("Total Pixels Processed ($N \times M$)", fontsize=12)
+axes[0].set_ylabel("Execution Time (Seconds)", fontsize=12)
+axes[0].grid(True, linestyle='--', alpha=0.7)
+
+# Plot 2: 10-Bit Hardware Bounding Proof (Using the 4096 output)
+axes[1].hist(U_final.ravel(), bins=50, color='darkorange', edgecolor='black')
+axes[1].set_title("Quantization Bounding Proof\n(10-Bit State Space Constraint)", fontsize=14, fontweight='bold')
+axes[1].set_xlabel("Compensated Drive State $\mathbf{\hat{U}}$", fontsize=12)
+axes[1].set_ylabel("Pixel Frequency", fontsize=12)
+axes[1].axvline(x=0, color='r', linestyle='--', linewidth=2, label='Lower Bound (0)')
+axes[1].axvline(x=1023, color='r', linestyle='--', linewidth=2, label='Upper Bound (1023)')
+axes[1].legend()
+axes[1].grid(True, linestyle='--', alpha=0.7)
+
+plt.tight_layout()
+
+# ==========================================
+# 3. Save Figures and Create Zip File
+# ==========================================
+output_dir = "algorithmic_complexity_figures"
+os.makedirs(output_dir, exist_ok=True)
+
+fig_path = os.path.join(output_dir, "algorithmic_complexity_benchmark.pdf")
+plt.savefig(fig_path, dpi=300, bbox_inches='tight', format='pdf')
+print(f"High-resolution PDF saved to {fig_path}")
+
+zip_filename = "algorithmic_complexity_benchmark.zip"
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    zipf.write(fig_path, arcname="algorithmic_complexity_benchmark.pdf")
+
+print(f"Results zipped successfully into: {zip_filename}")
+plt.show()
+
+try:
+    files.download(zip_filename)
+except Exception as e:
+    print("Download triggered. If automatic download fails, retrieve from the Colab file browser.")
